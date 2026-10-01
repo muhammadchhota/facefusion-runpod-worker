@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,10 +36,17 @@ CONTENT_TYPE_EXTENSIONS = {
 }
 
 FACE_SWAPPER_MODELS = {
-    "hyperswap_1a_256",
-    "ghost_1_256",
-    "ghost_3_256",
+    "blendswap_256", "ghost_1_256", "ghost_2_256", "ghost_3_256",
+    "hififace_unofficial_256", "hyperswap_1a_256", "hyperswap_1b_256",
+    "hyperswap_1c_256", "inswapper_128", "inswapper_128_fp16",
+    "simswap_256", "simswap_unofficial_512", "uniface_256",
 }
+FACE_ENHANCER_MODELS = {
+    "codeformer", "gfpgan_1.2", "gfpgan_1.3", "gfpgan_1.4", "gpen_bfr_256",
+    "gpen_bfr_512", "gpen_bfr_1024", "restoreformer_plus_plus",
+}
+FACE_MASK_TYPES = {"box", "occlusion", "area", "region"}
+
 
 
 class InputError(ValueError):
@@ -171,6 +179,57 @@ def _validate_target_content(target_path: Path, media_type: str) -> None:
         )
 
 
+def _extra_args(job_input: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Validated optional tuning flags. Returns (extra processors, extra CLI args)."""
+    options = job_input.get("options") or {}
+    if not isinstance(options, dict):
+        raise InputError("options must be an object")
+    processors: list[str] = []
+    args: list[str] = []
+
+    def number(name: str, low: float, high: float, integer: bool = False) -> str | None:
+        if name not in options:
+            return None
+        value = options[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise InputError(f"options.{name} must be a number from {low} to {high}")
+        return str(int(value)) if integer else str(float(value))
+
+    pixel_boost = options.get("face_swapper_pixel_boost")
+    if pixel_boost is not None:
+        if not isinstance(pixel_boost, str) or not re.fullmatch(r"\d{3,4}x\d{3,4}", pixel_boost):
+            raise InputError("options.face_swapper_pixel_boost must look like 512x512")
+        args += ["--face-swapper-pixel-boost", pixel_boost]
+    weight = number("face_swapper_weight", 0, 1)
+    if weight is not None:
+        args += ["--face-swapper-weight", weight]
+    enhancer = options.get("face_enhancer_model")
+    if enhancer is not None:
+        if enhancer not in FACE_ENHANCER_MODELS:
+            raise InputError("options.face_enhancer_model is not supported")
+        processors.append("face_enhancer")
+        args += ["--face-enhancer-model", enhancer]
+        blend = number("face_enhancer_blend", 0, 100, integer=True)
+        if blend is not None:
+            args += ["--face-enhancer-blend", blend]
+    blur = number("face_mask_blur", 0, 1)
+    if blur is not None:
+        args += ["--face-mask-blur", blur]
+    mask_types = options.get("face_mask_types")
+    if mask_types is not None:
+        if not isinstance(mask_types, list) or not mask_types or not set(mask_types) <= FACE_MASK_TYPES:
+            raise InputError("options.face_mask_types must be a list from box, occlusion, area, region")
+        args += ["--face-mask-types", *mask_types]
+    quality = number("output_video_quality", 0, 100, integer=True)
+    if quality is not None:
+        args += ["--output-video-quality", quality]
+    for name, flag in (("trim_frame_start", "--trim-frame-start"), ("trim_frame_end", "--trim-frame-end")):
+        value = number(name, 0, 1_000_000, integer=True)
+        if value is not None:
+            args += [flag, value]
+    return processors, args
+
+
 def _run_swap(job_input: dict[str, Any]) -> dict[str, Any]:
     media_type = job_input.get("media_type")
     if media_type not in {"image", "video"}:
@@ -211,6 +270,7 @@ def _run_swap(job_input: dict[str, Any]) -> dict[str, Any]:
     if face_swapper_model not in FACE_SWAPPER_MODELS:
         raise InputError("face_swapper_model is not supported")
 
+    extra_processors, extra_args = _extra_args(job_input)
     face_index = job_input.get("face_index", 0)
     reference_frame_number = job_input.get("reference_frame_number", 0)
     if not isinstance(face_index, int) or face_index < 0 or face_index > 20:
@@ -262,6 +322,7 @@ def _run_swap(job_input: dict[str, Any]) -> dict[str, Any]:
                 str(jobs_path),
                 "--processors",
                 "face_swapper",
+                *extra_processors,
                 "--face-swapper-model",
                 face_swapper_model,
                 "--execution-providers",
@@ -285,6 +346,7 @@ def _run_swap(job_input: dict[str, Any]) -> dict[str, Any]:
                 "--log-level",
                 "warn",
             ]
+            command.extend(extra_args)
             if media_type == "video":
                 command.extend(["--output-video-preset", "veryfast"])
 
