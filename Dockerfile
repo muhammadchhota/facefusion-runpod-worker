@@ -60,6 +60,10 @@ RUN curl -fsSL \
 # which crashes FaceFusion's parser. Ignore non-numeric values instead.
 RUN python -c "p='/facefusion/facefusion/execution.py'; s=open(p).read(); o=\"\\tif ' ' in text:\"; assert s.count(o)==1; open(p,'w').write(s.replace(o,\"\\tif text and ' ' in text and text.split()[0].isdigit():\"))"
 
+# Avoid cuDNN EXHAUSTIVE search: it requests multi-GB workspaces per thread and OOMs.
+RUN sed -i "s/return 'EXHAUSTIVE'/return 'DEFAULT'/" /facefusion/facefusion/execution.py \
+    && grep -q "return 'DEFAULT'" /facefusion/facefusion/execution.py
+
 COPY handler.py /handler.py
 
 CMD ["python", "-u", "/handler.py"]

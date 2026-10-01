@@ -22,6 +22,7 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_VIDEO_BYTES = 100 * 1024 * 1024
 DOWNLOAD_TIMEOUT = (15, 180)
 UPLOAD_TIMEOUT = (15, 300)
+EXECUTION_THREAD_COUNT = int(os.getenv("EXECUTION_THREAD_COUNT", "2"))  # FaceFusion default is 8, which OOMs 24 GB GPUs
 
 CONTENT_TYPE_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -279,6 +280,8 @@ def _run_swap(job_input: dict[str, Any]) -> dict[str, Any]:
                 str(mapped_face_index),
                 "--reference-frame-number",
                 str(reference_frame_number),
+                "--execution-thread-count",
+                str(EXECUTION_THREAD_COUNT),
                 "--log-level",
                 "warn",
             ]
@@ -366,6 +369,16 @@ def _detect_faces(job_input: dict[str, Any]) -> dict[str, Any]:
         return {"status": "succeeded", "faces": boxes, "count": len(boxes)}
 
 
+def _gpu_info() -> str:
+    try:
+        return subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception as error:  # diagnostics only
+        return f"unavailable ({error})"
+
+
 def handler(event: dict[str, Any]) -> dict[str, Any]:
     job_input = event.get("input")
     if not isinstance(job_input, dict):
@@ -403,7 +416,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             "status": "failed",
             "error": "FaceFusion processing failed",
             "error_type": "processing",
-            "detail": traceback.format_exc()[-3000:],  # MVP debugging; remove before production
+            "detail": traceback.format_exc()[-3000:] + "\nGPU: " + _gpu_info(),  # MVP debugging; remove before production
         }
 
 
