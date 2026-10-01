@@ -403,6 +403,7 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             "status": "failed",
             "error": "FaceFusion processing failed",
             "error_type": "processing",
+            "detail": traceback.format_exc()[-3000:],  # MVP debugging; remove before production
         }
 
 
