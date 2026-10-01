@@ -56,6 +56,10 @@ RUN curl -fsSL \
       --output-path /tmp/output-ghost-3.jpg \
     && rm -f /tmp/source.jpg /tmp/target.mp4 /tmp/target.jpg /tmp/output-*.jpg
 
+# Some Runpod GPUs return "Insufficient Permissions" for nvidia-smi memory fields,
+# which crashes FaceFusion's parser. Ignore non-numeric values instead.
+RUN python -c "p='/facefusion/facefusion/execution.py'; s=open(p).read(); o=\"\\tif ' ' in text:\"; assert s.count(o)==1; open(p,'w').write(s.replace(o,\"\\tif text and ' ' in text and text.split()[0].isdigit():\"))"
+
 COPY handler.py /handler.py
 
 CMD ["python", "-u", "/handler.py"]
