@@ -406,5 +406,4 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+runpod.serverless.start({"handler": handler})
